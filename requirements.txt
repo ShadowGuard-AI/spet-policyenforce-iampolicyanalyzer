@@ -1,0 +1,5 @@
+```
+boto3>=1.26.0
+jsonschema>=4.17.0
+PyYAML>=6.0
+```
