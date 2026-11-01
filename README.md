@@ -1,14 +1,23 @@
 # spet-policyenforce-IAMPolicyAnalyzer
-A command-line utility to analyze AWS IAM policies. It takes an IAM policy JSON file as input and identifies potential security vulnerabilities, such as overly permissive permissions or unused roles. Relies on 'boto3' to retrieve policy document, and regex to parse and analyze policy. - Focused on Enforces security policies defined in YAML or JSON format. Can be used to validate configurations, scan infrastructure-as-code (IaC) templates, or enforce coding standards. Ensures consistent security practices across an organization.
+A command-line utility to analyze AWS IAM policies held in local files or passed as a JSON string. It uses only the Python standard library; it does not call AWS, does not use boto3, and does not retrieve policy documents from anywhere.
+
+Checks, over Allow statements only (Deny statements are never reported as permissive findings):
+- Overly permissive: an action that is the bare `*` or ends in `:*`, and any action granted on resource `*` (reported as `<action> on *`).
+- Wildcard actions: any action containing `*`.
+- Wildcard resources: any resource containing `*`.
+
+A `Statement` given as a single object is accepted and treated as a one item list. A policy with no statements is a not-performed run: the tool prints an error and exits non-zero instead of reporting clean lists. The tool makes no claim about unused roles or unused resources; no such check is performed and no such field is reported.
 
 ## Install
-`git clone https://github.com/ShadowStrikeHQ/spet-policyenforce-iampolicyanalyzer`
+`git clone https://github.com/ShadowGuard-AI/spet-policyenforce-iampolicyanalyzer`
 
 ## Usage
-`./spet-policyenforce-iampolicyanalyzer [params]`
+`python3 main.py -f POLICY_FILE` or `python3 main.py -j 'POLICY_JSON_STRING'`
 
 ## Parameters
 - `-h`: Show help message and exit
+- `-f`, `--file`: Path to the IAM policy JSON file.
+- `-j`, `--json`: IAM policy JSON string.
 
 ## License
-Copyright (c) ShadowStrikeHQ
+Copyright (c) ShadowGuardAI

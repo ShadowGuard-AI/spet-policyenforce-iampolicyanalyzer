@@ -1,14 +1,9 @@
 import argparse
 import json
 import logging
-import os
-import re
 import sys
 from typing import Dict, List, Optional
 
-import boto3
-import jsonschema
-import yaml
 
 # Configure logging
 logging.basicConfig(
@@ -48,60 +43,67 @@ class IAMPolicyAnalyzer:
             logging.error("No policy file or document provided.")
             raise ValueError("No policy file or document provided.")
 
+    def statements(self):
+        """Normalize Statement to a list; a single statement object becomes a one item list."""
+        if not isinstance(self.policy_document, dict):
+            return []
+        stmt = self.policy_document.get("Statement")
+        if stmt is None:
+            return []
+        if isinstance(stmt, dict):
+            return [stmt]
+        if isinstance(stmt, list):
+            return [s for s in stmt if isinstance(s, dict)]
+        return []
+
     def analyze_policy(self) -> Dict:
-        """
-        Analyzes the IAM policy and identifies potential vulnerabilities.
-        """
+        if not self.statements():
+            raise ValueError("Policy has no statements to analyze.")
         results = {}
         results["overly_permissive"] = self.check_overly_permissive()
         results["wildcard_actions"] = self.check_wildcard_actions()
-        results["unused_resources"] = self.check_unused_resources() #Placeholder. Needs implementation
+        results["wildcard_resources"] = self.check_wildcard_resources()
         return results
 
+    def _allow_statements(self):
+        return [s for s in self.statements() if str(s.get("Effect", "Allow")).lower() != "deny"]
+
+    def _values(self, statement, key):
+        v = statement.get(key)
+        if v is None:
+            return []
+        return v if isinstance(v, list) else [v]
+
     def check_overly_permissive(self) -> List[str]:
-        """
-        Checks for overly permissive permissions, such as "ec2:*".
-        """
-        overly_permissive = []
-        if "Statement" in self.policy_document:
-            for statement in self.policy_document["Statement"]:
-                if "Action" in statement:
-                    actions = (
-                        statement["Action"]
-                        if isinstance(statement["Action"], list)
-                        else [statement["Action"]]
-                    )
-                    for action in actions:
-                        if isinstance(action, str) and action.endswith(":*"):
-                            overly_permissive.append(action)
-        return overly_permissive
+        findings = []
+        for statement in self._allow_statements():
+            for action in self._values(statement, "Action"):
+                if isinstance(action, str) and (action == "*" or action.endswith(":*")):
+                    findings.append(action)
+            resources = self._values(statement, "Resource")
+            actions = self._values(statement, "Action")
+            if any(r == "*" for r in resources) and actions:
+                for a in actions:
+                    label = f"{a} on *"
+                    if label not in findings:
+                        findings.append(label)
+        return findings
 
     def check_wildcard_actions(self) -> List[str]:
-        """
-        Checks for wildcard actions, such as "s3:Get*".
-        """
-        wildcard_actions = []
-        if "Statement" in self.policy_document:
-            for statement in self.policy_document["Statement"]:
-                if "Action" in statement:
-                    actions = (
-                        statement["Action"]
-                        if isinstance(statement["Action"], list)
-                        else [statement["Action"]]
-                    )
-                    for action in actions:
-                        if isinstance(action, str) and "*" in action:
-                            wildcard_actions.append(action)
-        return wildcard_actions
+        findings = []
+        for statement in self._allow_statements():
+            for action in self._values(statement, "Action"):
+                if isinstance(action, str) and "*" in action:
+                    findings.append(action)
+        return findings
 
-    def check_unused_resources(self) -> List[str]:
-        """
-        Placeholder for checking unused resources.  This functionality would
-        require deeper analysis and potentially access to AWS account information.
-        """
-        #TODO: Implement logic to check for unused resources. Requires significant
-        #additional implementation and potentially API access.
-        return []
+    def check_wildcard_resources(self) -> List[str]:
+        findings = []
+        for statement in self._allow_statements():
+            for resource in self._values(statement, "Resource"):
+                if isinstance(resource, str) and "*" in resource:
+                    findings.append(resource)
+        return findings
 
 
 def setup_argparse() -> argparse.ArgumentParser:
