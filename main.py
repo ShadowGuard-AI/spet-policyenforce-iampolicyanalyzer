@@ -21,6 +21,9 @@ class IAMPolicyAnalyzer:
         Initializes the IAMPolicyAnalyzer with a policy file or a policy document.
         """
         self.policy_document = None
+        # Source priority is silent: file beats document beats string when
+        # several are supplied, and nothing tells the caller which source
+        # was actually analyzed.
         if policy_file:
             try:
                 with open(policy_file, "r") as f:
@@ -53,6 +56,10 @@ class IAMPolicyAnalyzer:
         if isinstance(stmt, dict):
             return [stmt]
         if isinstance(stmt, list):
+            # Non object entries in a Statement list are dropped here without a
+            # word. A malformed statement vanishes instead of failing, and if
+            # every entry drops, analyze_policy raises its no statements error
+            # for a policy that did contain statements, just bad ones.
             return [s for s in stmt if isinstance(s, dict)]
         return []
 
@@ -66,6 +73,11 @@ class IAMPolicyAnalyzer:
         return results
 
     def _allow_statements(self):
+        # Only an exact deny, in any letter case, is excluded. A missing
+        # Effect counts as allow here, and so does a misspelled one, and a
+        # deny written with stray spaces. I also read only Action and
+        # Resource below, so a statement granting through NotAction is
+        # invisible to every check in this class.
         return [s for s in self.statements() if str(s.get("Effect", "Allow")).lower() != "deny"]
 
     def _values(self, statement, key):
@@ -78,6 +90,10 @@ class IAMPolicyAnalyzer:
         findings = []
         for statement in self._allow_statements():
             for action in self._values(statement, "Action"):
+                # No dedupe happens in these lists. The same action granted by three
+                # statements is reported three times, and an action ending in colon
+                # star lands here and again in wildcard_actions, so the buckets
+                # overlap by design and cannot be summed.
                 if isinstance(action, str) and (action == "*" or action.endswith(":*")):
                     findings.append(action)
             resources = self._values(statement, "Resource")
@@ -100,6 +116,10 @@ class IAMPolicyAnalyzer:
     def check_wildcard_resources(self) -> List[str]:
         findings = []
         for statement in self._allow_statements():
+            # A star anywhere in the resource string flags it, so a scoped ARN
+            # with one wildcard segment is listed beside a bare star that opens
+            # everything. The report keeps the string itself, which is the only
+            # way to tell those two apart.
             for resource in self._values(statement, "Resource"):
                 if isinstance(resource, str) and "*" in resource:
                     findings.append(resource)
