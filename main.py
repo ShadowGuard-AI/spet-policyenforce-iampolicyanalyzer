@@ -56,29 +56,32 @@ class IAMPolicyAnalyzer:
         if isinstance(stmt, dict):
             return [stmt]
         if isinstance(stmt, list):
-            # Non object entries in a Statement list are dropped here without a
-            # word. A malformed statement vanishes instead of failing, and if
-            # every entry drops, analyze_policy raises its no statements error
-            # for a policy that did contain statements, just bad ones.
-            return [s for s in stmt if isinstance(s, dict)]
-        return []
+            for i, entry in enumerate(stmt):
+                if not isinstance(entry, dict):
+                    raise ValueError(f"Statement entry {i} is not an object.")
+            return list(stmt)
+        raise ValueError("Statement must be an object or a list of objects.")
 
     def analyze_policy(self) -> Dict:
         if not self.statements():
             raise ValueError("Policy has no statements to analyze.")
+        for i, statement in enumerate(self.statements()):
+            if self._effect(statement) not in ("allow", "deny"):
+                raise ValueError(f"Statement {i} has a missing or invalid Effect: {statement.get('Effect')!r}.")
         results = {}
         results["overly_permissive"] = self.check_overly_permissive()
         results["wildcard_actions"] = self.check_wildcard_actions()
         results["wildcard_resources"] = self.check_wildcard_resources()
         return results
 
+    @staticmethod
+    def _effect(statement):
+        return str(statement.get("Effect", "")).strip().lower()
+
     def _allow_statements(self):
-        # Only an exact deny, in any letter case, is excluded. A missing
-        # Effect counts as allow here, and so does a misspelled one, and a
-        # deny written with stray spaces. I also read only Action and
-        # Resource below, so a statement granting through NotAction is
-        # invisible to every check in this class.
-        return [s for s in self.statements() if str(s.get("Effect", "Allow")).lower() != "deny"]
+        # Effect is normalized (case and surrounding whitespace) and was
+        # validated by analyze_policy, so only a real Allow reaches here.
+        return [s for s in self.statements() if self._effect(s) == "allow"]
 
     def _values(self, statement, key):
         v = statement.get(key)
@@ -96,6 +99,9 @@ class IAMPolicyAnalyzer:
                 # overlap by design and cannot be summed.
                 if isinstance(action, str) and (action == "*" or action.endswith(":*")):
                     findings.append(action)
+            for na in self._values(statement, "NotAction"):
+                if isinstance(na, str):
+                    findings.append(f"NotAction: {na}")
             resources = self._values(statement, "Resource")
             actions = self._values(statement, "Action")
             if any(r == "*" for r in resources) and actions:
